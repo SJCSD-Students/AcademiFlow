@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AcademiFlow</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
+    
+    <style>
+        /* ... (Keep your existing CSS styles here) ... */
+        :root { --primary-bg: #f0f2f5; --card-bg: #ffffff; }
+        body { background-color: var(--primary-bg); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 16px;
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            margin-bottom: 20px;
+            padding: 20px;
+        }
+        .grade-circle {
+            width: 50px; height: 50px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: bold; color: white;
+        }
+        .grade-A { background-color: #4cd964; }
+        .grade-B { background-color: #ffcc00; }
+        .grade-C { background-color: #ff9500; }
+        .grade-D { background-color: #ff3b30; }
+        .grade-F { background-color: #ff3b30; }
+    </style>
+</head>
+<body>
+
+<div class="container py-4" style="max-width: 600px;">
+    <h2 class="text-center mb-4 fw-bold">GradeTrack</h2>
+
+    <div id="login-section" class="glass-card">
+        <h4 class="mb-3">Link HAC Account</h4>
+        <input type="text" id="username" class="form-control mb-2" placeholder="Student Number/Username">
+        <input type="password" id="password" class="form-control mb-2" placeholder="Password">
+        
+        <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" id="rememberMe">
+            <label class="form-check-label" for="rememberMe">
+                Remember Me (Encrypted)
+            </label>
+        </div>
+        
+        <button onclick="syncData()" id="syncBtn" class="btn btn-primary w-100">Sync Grades & Attendance</button>
+    </div>
+
+    <div id="dashboard" style="display:none;">
+        <div class="glass-card text-center">
+            <h6 class="text-muted">ESTIMATED GPA</h6>
+            <h1 id="gpa-display" class="display-4 fw-bold">--</h1>
+        </div>
+
+        <div id="courses-list"></div>
+    </div>
+</div>
+
+<script>
+    // IMPORTANT: REPLACE THIS URL AFTER DEPLOYING TO RENDER
+    const API_URL = "https://your-app-name.onrender.com"; 
+    
+    // --- SECURITY KEY: CHANGE THIS TO A UNIQUE STRING FOR BETTER SECURITY ---
+    const HAC_SECRET_KEY = "my_super_secret_hac_key_12345";
+    
+    // --- LOCAL STORAGE FUNCTIONS ---
+
+    function saveEncryptedCredentials(username, password) {
+        const encryptedUser = CryptoJS.AES.encrypt(username, HAC_SECRET_KEY).toString();
+        const encryptedPass = CryptoJS.AES.encrypt(password, HAC_SECRET_KEY).toString();
+        
+        localStorage.setItem('hac_user_enc', encryptedUser);
+        localStorage.setItem('hac_pass_enc', encryptedPass);
+    }
+
+    function loadEncryptedCredentials() {
+        const encryptedUser = localStorage.getItem('hac_user_enc');
+        const encryptedPass = localStorage.getItem('hac_pass_enc');
+        
+        if (encryptedUser && encryptedPass) {
+            try {
+                const decryptedUser = CryptoJS.AES.decrypt(encryptedUser, HAC_SECRET_KEY).toString(CryptoJS.enc.Utf8);
+                const decryptedPass = CryptoJS.AES.decrypt(encryptedPass, HAC_SECRET_KEY).toString(CryptoJS.enc.Utf8);
+                
+                document.getElementById('username').value = decryptedUser;
+                document.getElementById('password').value = decryptedPass;
+                document.getElementById('rememberMe').checked = true;
+            } catch (e) {
+                console.error("Decryption failed:", e);
+                // Clear corrupted data
+                localStorage.removeItem('hac_user_enc');
+                localStorage.removeItem('hac_pass_enc');
+            }
+        }
+    }
+
+    // --- MAIN SYNC FUNCTION ---
+    async function syncData() {
+        const user = document.getElementById('username').value;
+        const pass = document.getElementById('password').value;
+        const rememberMe = document.getElementById('rememberMe').checked;
+        const btn = document.getElementById('syncBtn');
+        
+        if (!user || !pass) {
+            alert("Please enter both username and password.");
+            return;
+        }
+
+        btn.disabled = true;
+        btn.innerText = "Syncing (this may take 10s)...";
+
+        try {
+            const response = await fetch(`${API_URL}/api/grades`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username: user, password: pass})
+            });
+
+            const data = await response.json();
+            
+            if(data.error) {
+                alert(`Error: ${data.error}`);
+                // Only save on successful sync
+                if (!rememberMe) {
+                    localStorage.removeItem('hac_user_enc');
+                    localStorage.removeItem('hac_pass_enc');
+                }
+                btn.disabled = false;
+                btn.innerText = "Try Again";
+                return;
+            }
+
+            // SUCCESS: Save credentials if "Remember Me" is checked
+            if (rememberMe) {
+                saveEncryptedCredentials(user, pass);
+            } else {
+                // If user unchecked the box, clear saved data
+                localStorage.removeItem('hac_user_enc');
+                localStorage.removeItem('hac_pass_enc');
+            }
+
+            // Render Data and switch view
+            renderDashboard(data.courses);
+            document.getElementById('login-section').style.display = 'none';
+            document.getElementById('dashboard').style.display = 'block';
+
+        } catch (error) {
+            alert("Connection failed. Check your API URL or Render service status.");
+            btn.disabled = false;
+            btn.innerText = "Sync Grades & Attendance";
+        }
+    }
+    
+    // --- HELPER FUNCTIONS (KEEP THESE) ---
+    function getGradeColor(score) {
+        let s = parseFloat(score);
+        if(isNaN(s)) return 'bg-secondary';
+        if(s >= 90) return 'grade-A';
+        if(s >= 80) return 'grade-B';
+        if(s >= 70) return 'grade-C';
+        if(s >= 60) return 'grade-D';
+        return 'grade-F';
+    }
+
+    function renderDashboard(courses) {
+        // ... (Keep the rest of the renderDashboard function as before) ...
+        const list = document.getElementById('courses-list');
+        list.innerHTML = "";
+        
+        let totalPoints = 0;
+        let count = 0;
+
+        courses.forEach(c => {
+            const colorClass = getGradeColor(c.average);
+            
+            // GPA Calc (Simple 4.0 scale estimation)
+            if(c.average !== "N/A") {
+                let s = parseFloat(c.average);
+                if(s >= 90) totalPoints += 4.0;
+                else if(s >= 80) totalPoints += 3.0;
+                else if(s >= 70) totalPoints += 2.0;
+                else if(s >= 60) totalPoints += 1.0;
+                count++;
+            }
+
+            // Create Assignments HTML
+            let assignmentsHtml = c.assignments.map(a => `
+                <div class="d-flex justify-content-between border-bottom py-2 small">
+                    <span>${a.name}</span>
+                    <span class="fw-bold">${a.score}/${a.total}</span>
+                </div>
+            `).join('');
+
+            let html = `
+                <div class="glass-card">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="m-0">${c.name}</h5>
+                        <div class="grade-circle ${colorClass}">${c.average}</div>
+                    </div>
+                    <div class="accordion" id="acc-${c.name.replace(/\s/g,'')}">
+                        <div class="accordion-item border-0">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed py-2 bg-light" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-${c.name.replace(/\s/g,'')}">
+                                    View Assignments
+                                </button>
+                            </h2>
+                            <div id="collapse-${c.name.replace(/\s/g,'')}" class="accordion-collapse collapse">
+                                <div class="accordion-body p-0 pt-2">
+                                    ${assignmentsHtml || '<p class="text-muted p-2">No assignments found.</p>'}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            list.innerHTML += html;
+        });
+
+        // Update GPA
+        let gpa = count > 0 ? (totalPoints / count).toFixed(2) : "N/A";
+        document.getElementById('gpa-display').innerText = gpa;
+    }
+    
+    // --- INITIALIZE: LOAD CREDENTIALS ON PAGE LOAD ---
+    document.addEventListener('DOMContentLoaded', loadEncryptedCredentials);
+</script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
