@@ -3,13 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AcademiFlow</title>
+    <title>GradeSync</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
-    
     <style>
-        /* ... (Keep your existing CSS styles here) ... */
         :root { --primary-bg: #f0f2f5; --card-bg: #ffffff; }
         body { background-color: var(--primary-bg); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
         .glass-card {
@@ -36,17 +33,17 @@
 <body>
 
 <div class="container py-4" style="max-width: 600px;">
-    <h2 class="text-center mb-4 fw-bold">GradeTrack</h2>
+    <h2 class="text-center mb-4 fw-bold">GradeSync</h2>
 
     <div id="login-section" class="glass-card">
-        <h4 class="mb-3">Link HAC Account</h4>
+        <h4 class="mb-3">Link HAC Account (St. Johns)</h4>
         <input type="text" id="username" class="form-control mb-2" placeholder="Student Number/Username">
         <input type="password" id="password" class="form-control mb-2" placeholder="Password">
         
         <div class="form-check mb-3">
             <input class="form-check-input" type="checkbox" id="rememberMe">
             <label class="form-check-label" for="rememberMe">
-                Remember Me (Encrypted)
+                Remember Me (Securely Encrypted)
             </label>
         </div>
         
@@ -66,40 +63,31 @@
 <script>
     // IMPORTANT: REPLACE THIS URL AFTER DEPLOYING TO RENDER
     const API_URL = "https://hac-backend-1m2z.onrender.com"; 
-    
-    // --- SECURITY KEY: CHANGE THIS TO A UNIQUE STRING FOR BETTER SECURITY ---
-    const HAC_SECRET_KEY = "DOLPHIN9523";
-    
+
     // --- LOCAL STORAGE FUNCTIONS ---
-
-    function saveEncryptedCredentials(username, password) {
-        const encryptedUser = CryptoJS.AES.encrypt(username, HAC_SECRET_KEY).toString();
-        const encryptedPass = CryptoJS.AES.encrypt(password, HAC_SECRET_KEY).toString();
-        
-        localStorage.setItem('hac_user_enc', encryptedUser);
-        localStorage.setItem('hac_pass_enc', encryptedPass);
+    function saveSessionToken(token) {
+        localStorage.setItem('hac_token', token);
     }
 
-    function loadEncryptedCredentials() {
-        const encryptedUser = localStorage.getItem('hac_user_enc');
-        const encryptedPass = localStorage.getItem('hac_pass_enc');
-        
-        if (encryptedUser && encryptedPass) {
-            try {
-                const decryptedUser = CryptoJS.AES.decrypt(encryptedUser, HAC_SECRET_KEY).toString(CryptoJS.enc.Utf8);
-                const decryptedPass = CryptoJS.AES.decrypt(encryptedPass, HAC_SECRET_KEY).toString(CryptoJS.enc.Utf8);
-                
-                document.getElementById('username').value = decryptedUser;
-                document.getElementById('password').value = decryptedPass;
-                document.getElementById('rememberMe').checked = true;
-            } catch (e) {
-                console.error("Decryption failed:", e);
-                // Clear corrupted data
-                localStorage.removeItem('hac_user_enc');
-                localStorage.removeItem('hac_pass_enc');
-            }
-        }
+    function loadSessionToken() {
+        return localStorage.getItem('hac_token');
     }
+    
+    function clearSessionToken() {
+        localStorage.removeItem('hac_token');
+    }
+
+    // --- HELPER FUNCTION ---
+    function getGradeColor(score) {
+        let s = parseFloat(score);
+        if(isNaN(s)) return 'bg-secondary';
+        if(s >= 90) return 'grade-A';
+        if(s >= 80) return 'grade-B';
+        if(s >= 70) return 'grade-C';
+        if(s >= 60) return 'grade-D';
+        return 'grade-F';
+    }
+
 
     // --- MAIN SYNC FUNCTION ---
     async function syncData() {
@@ -108,8 +96,18 @@
         const rememberMe = document.getElementById('rememberMe').checked;
         const btn = document.getElementById('syncBtn');
         
-        if (!user || !pass) {
-            alert("Please enter both username and password.");
+        let existingToken = loadSessionToken();
+        let payload = {};
+
+        // 1. Determine payload: Token or fresh credentials
+        if (existingToken && rememberMe && !user && !pass) {
+            // Use saved token (auto-syncing)
+            payload = { session_token: existingToken };
+        } else if (user && pass) {
+            // Use fresh credentials (first login or re-login)
+            payload = { username: user, password: pass };
+        } else {
+            alert("Please enter credentials or check 'Remember Me'.");
             return;
         }
 
@@ -120,30 +118,24 @@
             const response = await fetch(`${API_URL}/api/grades`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({username: user, password: pass})
+                body: JSON.stringify(payload)
             });
 
             const data = await response.json();
             
             if(data.error) {
-                alert(`Error: ${data.error}`);
-                // Only save on successful sync
-                if (!rememberMe) {
-                    localStorage.removeItem('hac_user_enc');
-                    localStorage.removeItem('hac_pass_enc');
-                }
+                alert(`Error: ${data.error}. Please re-enter your credentials.`);
+                clearSessionToken(); 
                 btn.disabled = false;
                 btn.innerText = "Try Again";
                 return;
             }
 
-            // SUCCESS: Save credentials if "Remember Me" is checked
-            if (rememberMe) {
-                saveEncryptedCredentials(user, pass);
+            // SUCCESS: Save the new session token provided by the backend
+            if (rememberMe && data.session_token) {
+                saveSessionToken(data.session_token);
             } else {
-                // If user unchecked the box, clear saved data
-                localStorage.removeItem('hac_user_enc');
-                localStorage.removeItem('hac_pass_enc');
+                clearSessionToken();
             }
 
             // Render Data and switch view
@@ -158,19 +150,7 @@
         }
     }
     
-    // --- HELPER FUNCTIONS (KEEP THESE) ---
-    function getGradeColor(score) {
-        let s = parseFloat(score);
-        if(isNaN(s)) return 'bg-secondary';
-        if(s >= 90) return 'grade-A';
-        if(s >= 80) return 'grade-B';
-        if(s >= 70) return 'grade-C';
-        if(s >= 60) return 'grade-D';
-        return 'grade-F';
-    }
-
     function renderDashboard(courses) {
-        // ... (Keep the rest of the renderDashboard function as before) ...
         const list = document.getElementById('courses-list');
         list.innerHTML = "";
         
@@ -198,20 +178,23 @@
                 </div>
             `).join('');
 
+            // Clean up course name for unique ID creation
+            const safeName = c.name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+
             let html = `
                 <div class="glass-card">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h5 class="m-0">${c.name}</h5>
                         <div class="grade-circle ${colorClass}">${c.average}</div>
                     </div>
-                    <div class="accordion" id="acc-${c.name.replace(/\s/g,'')}">
+                    <div class="accordion" id="acc-${safeName}">
                         <div class="accordion-item border-0">
                             <h2 class="accordion-header">
-                                <button class="accordion-button collapsed py-2 bg-light" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-${c.name.replace(/\s/g,'')}">
+                                <button class="accordion-button collapsed py-2 bg-light" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-${safeName}">
                                     View Assignments
                                 </button>
                             </h2>
-                            <div id="collapse-${c.name.replace(/\s/g,'')}" class="accordion-collapse collapse">
+                            <div id="collapse-${safeName}" class="accordion-collapse collapse">
                                 <div class="accordion-body p-0 pt-2">
                                     ${assignmentsHtml || '<p class="text-muted p-2">No assignments found.</p>'}
                                 </div>
@@ -228,8 +211,12 @@
         document.getElementById('gpa-display').innerText = gpa;
     }
     
-    // --- INITIALIZE: LOAD CREDENTIALS ON PAGE LOAD ---
-    document.addEventListener('DOMContentLoaded', loadEncryptedCredentials);
+    // --- INITIALIZE: CHECK FOR SAVED TOKEN ON PAGE LOAD ---
+    document.addEventListener('DOMContentLoaded', function() {
+        if (loadSessionToken()) {
+            document.getElementById('rememberMe').checked = true;
+        }
+    });
 </script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
